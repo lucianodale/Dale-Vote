@@ -12,6 +12,7 @@ import {
   AlertCircle
 } from 'lucide-react';
 import { VotingItem, Vote } from '../types';
+import { db } from '../services/db';
 
 interface PublicVoteItemProps {
   items: VotingItem[];
@@ -31,32 +32,74 @@ const PublicVoteItem: React.FC<PublicVoteItemProps> = ({ items, onVote }) => {
   });
   const [verificationCode, setVerificationCode] = useState('');
   const [isVerifying, setIsVerifying] = useState(false);
+  const [isSending, setIsSending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   if (!item) return <div className="text-center py-20 font-bold text-gray-400 uppercase tracking-widest">Votação não encontrada.</div>;
 
   const handleStartVote = () => setStep('form');
 
-  const handleSubmitForm = (e: React.FormEvent) => {
-    e.preventDefault();
-    setStep('verification');
+  const formatPhone = (phone: string) => {
+    // Remove tudo que não for número
+    const numbers = phone.replace(/\D/g, '');
+    // Se não tiver código do país (assumindo Brasil e tamanho de celular com DDD), adiciona +55
+    if (numbers.length >= 10 && numbers.length <= 11) {
+      return `+55${numbers}`;
+    }
+    // Se já parecer ter código do país
+    return `+${numbers}`;
   };
 
-  const handleVerify = () => {
+  const handleSubmitForm = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSending(true);
+    setError(null);
+
+    const formattedPhone = formatPhone(formData.phone);
+
+    try {
+      const { success, error: sendError } = await db.sendSmsOtp(formattedPhone);
+      
+      if (success) {
+        setFormData(prev => ({ ...prev, phone: formattedPhone })); // Salva o número formatado
+        setStep('verification');
+      } else {
+        setError(sendError || "Erro ao enviar SMS. Verifique o número.");
+      }
+    } catch (err) {
+      setError("Falha na comunicação com o servidor.");
+    } finally {
+      setIsSending(false);
+    }
+  };
+
+  const handleVerify = async () => {
     setIsVerifying(true);
-    setTimeout(() => {
-      const newVote: Vote = {
-        id: Math.random().toString(36).substr(2, 9),
-        itemId: item.id,
-        voterName: formData.fullName,
-        voterEmail: formData.email,
-        voterPhone: formData.phone,
-        isVerified: true,
-        createdAt: Date.now()
-      };
-      onVote(newVote);
+    setError(null);
+
+    try {
+      const { success, error: verifyError } = await db.verifySmsOtp(formData.phone, verificationCode);
+      
+      if (success) {
+        const newVote: Vote = {
+          id: Math.random().toString(36).substr(2, 9),
+          itemId: item.id,
+          voterName: formData.fullName,
+          voterEmail: formData.email,
+          voterPhone: formData.phone,
+          isVerified: true,
+          createdAt: Date.now()
+        };
+        onVote(newVote);
+        setStep('success');
+      } else {
+        setError(verifyError || "Código inválido. Tente novamente.");
+      }
+    } catch (err) {
+      setError("Erro ao validar código.");
+    } finally {
       setIsVerifying(false);
-      setStep('success');
-    }, 1500);
+    }
   };
 
   return (
@@ -105,10 +148,19 @@ const PublicVoteItem: React.FC<PublicVoteItemProps> = ({ items, onVote }) => {
               <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 w-5 h-5" />
             </div>
             <div className="relative">
-              <input required type="tel" placeholder="WhatsApp (DDD)" className="w-full pl-12 pr-6 py-5 rounded-2xl border border-gray-200 outline-none focus:ring-4 focus:ring-red-50 focus:border-red-600 transition-all font-bold" value={formData.phone} onChange={e => setFormData({...formData, phone: e.target.value})} />
+              <input required type="tel" placeholder="WhatsApp (DDD + Número)" className="w-full pl-12 pr-6 py-5 rounded-2xl border border-gray-200 outline-none focus:ring-4 focus:ring-red-50 focus:border-red-600 transition-all font-bold" value={formData.phone} onChange={e => setFormData({...formData, phone: e.target.value})} />
               <Phone className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 w-5 h-5" />
             </div>
-            <button type="submit" className="w-full bg-red-600 text-white py-5 rounded-2xl font-black hover:bg-red-700 transition-all shadow-xl shadow-red-100">Próximo Passo</button>
+
+            {error && (
+              <div className="bg-red-50 p-4 rounded-xl flex items-center gap-3 text-red-600 text-xs font-bold uppercase animate-fadeIn">
+                <AlertCircle className="w-4 h-4 shrink-0" /> {error}
+              </div>
+            )}
+
+            <button type="submit" disabled={isSending} className="w-full bg-red-600 text-white py-5 rounded-2xl font-black hover:bg-red-700 disabled:opacity-70 disabled:cursor-not-allowed transition-all shadow-xl shadow-red-100 flex items-center justify-center gap-2">
+              {isSending ? <Loader2 className="w-6 h-6 animate-spin" /> : "Enviar Código SMS"}
+            </button>
           </form>
         </div>
       )}
@@ -123,11 +175,34 @@ const PublicVoteItem: React.FC<PublicVoteItemProps> = ({ items, onVote }) => {
             <p className="text-gray-500 font-medium leading-relaxed">Enviamos um código para o número <br/><span className="text-black font-bold">{formData.phone}</span></p>
           </div>
           <div className="space-y-8">
-            <input type="text" placeholder="000000" maxLength={6} className="w-full text-center text-4xl font-black tracking-[0.6em] px-4 py-8 rounded-[2rem] border-2 border-gray-100 outline-none focus:ring-4 focus:ring-red-50 focus:border-red-600 transition-all bg-gray-50" value={verificationCode} onChange={e => setVerificationCode(e.target.value)} />
+            <input 
+              type="text" 
+              placeholder="000000" 
+              maxLength={6} 
+              className="w-full text-center text-4xl font-black tracking-[0.6em] px-4 py-8 rounded-[2rem] border-2 border-gray-100 outline-none focus:ring-4 focus:ring-red-50 focus:border-red-600 transition-all bg-gray-50" 
+              value={verificationCode} 
+              onChange={e => setVerificationCode(e.target.value)} 
+            />
+            
+            {error && (
+              <div className="text-red-600 text-xs font-bold uppercase animate-fadeIn">
+                {error}
+              </div>
+            )}
+
             <button onClick={handleVerify} disabled={verificationCode.length < 4 || isVerifying} className="w-full bg-black text-white py-5 rounded-2xl font-black hover:bg-gray-800 disabled:bg-gray-200 disabled:text-gray-400 transition-all flex items-center justify-center gap-3">
-              {isVerifying ? <Loader2 className="w-6 h-6 animate-spin" /> : "Finalizar Voto"}
+              {isVerifying ? <Loader2 className="w-6 h-6 animate-spin" /> : "Confirmar Voto"}
             </button>
-            <p className="text-xs font-bold text-gray-400 uppercase cursor-pointer hover:text-red-600 transition-colors">Reenviar código</p>
+            
+            <div className="space-y-2">
+               <button onClick={handleSubmitForm} disabled={isSending} className="text-xs font-bold text-gray-400 uppercase cursor-pointer hover:text-red-600 transition-colors bg-transparent border-none">
+                 {isSending ? "Enviando..." : "Reenviar código"}
+               </button>
+               <br />
+               <button onClick={() => setStep('form')} className="text-[10px] font-bold text-gray-300 uppercase hover:text-black transition-colors">
+                 Corrigir número
+               </button>
+            </div>
           </div>
         </div>
       )}

@@ -136,6 +136,50 @@ class DatabaseService {
     const { error } = await supabase.from('votes').delete().eq('item_id', itemId);
     if (error) throw error;
   }
+
+  // Integração Twilio via Vercel Serverless Functions (/api)
+  
+  async sendSmsOtp(phone: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      const response = await fetch('/api/send-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone })
+      });
+      
+      const data = await response.json();
+      
+      if (!response.ok || !data.success) {
+        throw new Error(data.message || 'Erro ao enviar SMS');
+      }
+      
+      return { success: true };
+    } catch (err: any) {
+      console.error('Twilio Send Error:', err);
+      return { success: false, error: err.message || 'Erro de conexão' };
+    }
+  }
+
+  async verifySmsOtp(phone: string, code: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      const response = await fetch('/api/verify-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone, code })
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) throw new Error(data.message || 'Erro na verificação');
+      if (!data.success) throw new Error(data.message || 'Código inválido');
+      if (!data.valid) throw new Error('Código incorreto ou expirado');
+
+      return { success: true };
+    } catch (err: any) {
+      console.error('Twilio Verify Error:', err);
+      return { success: false, error: err.message || 'Erro ao validar' };
+    }
+  }
 }
 
 export const db = new DatabaseService();
