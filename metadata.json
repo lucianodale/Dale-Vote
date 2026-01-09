@@ -1,0 +1,7 @@
+{
+  "name": "Dale! Vote - Sistema de Votação",
+  "description": "Uma plataforma moderna e sofisticada para criação e gestão de votações online, com suporte a verificação por SMS e relatórios detalhados.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
